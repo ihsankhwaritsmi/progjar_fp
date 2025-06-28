@@ -113,7 +113,7 @@ class Server(threading.Thread):
 def main():
     """Initializes and starts the server."""
     server_port = 8000
-    server_instance = Server(port=server_port, required_players=3)
+    server_instance = Server(port=server_port, required_players=2)
     server_instance.daemon = True
     server_instance.start()
 
