@@ -1,10 +1,7 @@
-# file: game_logic.py
-
 import threading
 import logging
 
 class NumberGuessGame:
-    """Manages the state and rules of the Number Guess Game."""
     def __init__(self, required_players=2):
         self.required_players = required_players
         self.players = {}
@@ -29,19 +26,22 @@ class NumberGuessGame:
 
     def add_player(self, player_id, username=None):
         with self.lock:
+            if username in self.player_usernames.values():
+                return {"status": "error", "message": "Username is already taken."}
             if player_id in self.players:
                 return {"status": "error", "message": "Player ID already exists."}
-            if len(self.players) >= self.required_players:
+            if len(self.players) >= self.required_players and self.round_state != "WAITING_FOR_PLAYERS":
                 return {"status": "error", "message": "Game is full."}
             
             self.players[player_id] = {'score': 0, 'raised_number': None, 'guess': None}
-            self.turn_order.append(player_id)
+            if player_id not in self.turn_order:
+                self.turn_order.append(player_id)
             if username:
                 self.player_usernames[player_id] = username
             
             logging.info(f"Player {player_id} ({username}) joined. Total players: {len(self.players)}/{self.required_players}.")
             
-            if len(self.players) == self.required_players:
+            if len(self.players) == self.required_players and self.round_state == "WAITING_FOR_PLAYERS":
                 self.start_new_round()
             else:
                 remaining = self.required_players - len(self.players)
@@ -57,7 +57,8 @@ class NumberGuessGame:
             was_current_turn = (player_id == self._get_current_player_id())
             
             del self.players[player_id]
-            self.turn_order.remove(player_id)
+            if player_id in self.turn_order:
+                self.turn_order.remove(player_id)
             if player_id in self.player_usernames:
                 del self.player_usernames[player_id]
             
@@ -113,6 +114,7 @@ class NumberGuessGame:
             self._check_for_state_transition()
 
     def _handle_guess_action(self, player_id, username, action, guess):
+        if not self.turn_order: return
         designated_guesser_index = (self.current_round - 1) % len(self.turn_order)
         designated_guesser_id = self.turn_order[designated_guesser_index]
         
@@ -137,8 +139,9 @@ class NumberGuessGame:
 
     def _check_for_state_transition(self):
         if self.round_state == "WAITING_FOR_NUMBERS":
-            if self.current_turn_index >= len(self.turn_order):  # All players have raised
-                self.actual_total = sum(p['raised_number'] for p in self.players.values())
+            if self.current_turn_index >= len(self.turn_order):  # All players raised
+                self.actual_total = sum(p['raised_number'] for p in self.players.values() if p['raised_number'] is not None)
+                if not self.turn_order: return # No player
                 designated_guesser_index = (self.current_round - 1) % len(self.turn_order)
                 designated_guesser_id = self.turn_order[designated_guesser_index]
                 designated_username = self.player_usernames.get(designated_guesser_id, designated_guesser_id)
@@ -147,7 +150,7 @@ class NumberGuessGame:
                     f"All numbers are in! Waiting for {designated_username} to submit a guess."
                 )
                 logging.info(f"All players raised. Actual total is {self.actual_total} (hidden).")
-            else:  # Still waiting for other players
+            else:  # Waiting for other
                 next_player_id = self._get_current_player_id()
                 next_username = self.player_usernames.get(next_player_id, next_player_id)
                 self._update_round_state("WAITING_FOR_NUMBERS", f"Waiting for {next_username} to raise a number.")
@@ -158,17 +161,13 @@ class NumberGuessGame:
             if self.round_state == 'WAITING_FOR_NUMBERS':
                 active_player_id = self._get_current_player_id()
             elif self.round_state == 'WAITING_FOR_GUESSES':
+                if not self.turn_order:
+                    return self.get_default_state()
                 designated_guesser_index = (self.current_round - 1) % len(self.turn_order)
                 active_player_id = self.turn_order[designated_guesser_index]
             
-            # Create a safe copy of player data for display
             display_players = {pid: data.copy() for pid, data in self.players.items()}
-            if self.round_state != "ROUND_OVER":
-                for pid, data in display_players.items():
-                    if data.get('guess') is not None: data['guess'] = '?'
-                    # Optionally hide raised numbers until round over
-                    # if data.get('raised_number') is not None: data['raised_number'] = '?'
-
+            
             return {
                 "current_round": self.current_round,
                 "round_state": self.round_state,
@@ -177,5 +176,20 @@ class NumberGuessGame:
                 "actual_total": self.actual_total if self.round_state == "ROUND_OVER" else None,
                 "required_players": self.required_players,
                 "active_player_id": active_player_id,
-                "player_usernames": self.player_usernames
+                "player_usernames": self.player_usernames,
+                "turn_order": self.turn_order,
             }
+
+    def get_default_state(self):
+        return {
+            "current_round": 0,
+            "round_state": "WAITING_FOR_PLAYERS",
+            "round_message": "Waiting for players...",
+            "players": {},
+            "actual_total": None,
+            "required_players": self.required_players,
+            "active_player_id": None,
+            "player_usernames": {},
+            "turn_order": [],
+        }
+

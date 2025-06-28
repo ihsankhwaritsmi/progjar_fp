@@ -1,4 +1,3 @@
-
 import pygame
 import sys
 import config
@@ -62,7 +61,8 @@ class GameApp:
                     self.username += event.unicode
                     self.username_error = ""
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            if self.ui.username_connect_btn_rect.collidepoint(event.pos):
+            connect_btn_rect = self.ui.get_connect_button_rect()
+            if connect_btn_rect and connect_btn_rect.collidepoint(event.pos):
                 self.try_connect()
 
     def handle_game_events(self, event):
@@ -72,7 +72,15 @@ class GameApp:
         is_my_turn = (self.player_id == state.get('active_player_id'))
         can_start_new = (state.get('round_state') == "ROUND_OVER")
         can_raise = (state.get('round_state') == "WAITING_FOR_NUMBERS" and is_my_turn)
-        can_guess = (state.get('round_state') == "WAITING_FOR_GUESSES" and is_my_turn)
+        # Check if player is designated guesser (their turn)
+        is_guesser = False
+        if state.get('round_state') == "WAITING_FOR_GUESSES" and state.get('turn_order'):
+             guesser_idx = (state.get('current_round', 1) - 1) % len(state.get('turn_order'))
+             if guesser_idx < len(state.get('turn_order')):
+                 guesser_id = state['turn_order'][guesser_idx]
+                 is_guesser = (self.player_id == guesser_id)
+
+        can_guess = (state.get('round_state') == "WAITING_FOR_GUESSES" and is_guesser)
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             if can_start_new and self.ui.btn_start_new_rect.collidepoint(event.pos):
@@ -99,6 +107,7 @@ class GameApp:
 
     def try_connect(self):
         if len(self.username.strip()) > 0:
+            self.username_error = ""
             self.network.connect()
 
     def submit_guess(self):
@@ -106,20 +115,17 @@ class GameApp:
             try:
                 self.network.send_action("make_guess", {"guess": int(self.input_text)})
                 self.input_text = ""
+                self.input_active = False
             except ValueError:
                 self.input_text = ""
 
     def process_server_message(self, message):
         msg_type = message.get("type")
-        if msg_type == "welcome":
-            self.player_id = message.get("player_id")
-            self.current_state = config.STATE_GAME
-            pygame.display.set_caption(f"Number Guess Game - {self.username}")
-            self.player_usernames[self.player_id] = self.username
-        elif msg_type == "game_state":
-            self.game_state = message.get("data", {})
-            if "player_usernames" in message:
-                self.player_usernames.update(message["player_usernames"])
+        if msg_type == "game_state":
+            new_state = message.get("data", {})
+            if "player_usernames" in new_state:
+                self.player_usernames.update(new_state["player_usernames"])
+            self.game_state = new_state
         elif msg_type == "error":
             error_msg = message.get('message', 'Unknown error')
             if self.current_state == config.STATE_CONNECTING:
@@ -134,6 +140,11 @@ class GameApp:
         print(error_msg)
 
     def cleanup(self):
+        print("Cleaning up and closing.")
         self.network.close()
         pygame.quit()
         sys.exit()
+
+if __name__ == "__main__":
+    app = GameApp()
+    app.run()

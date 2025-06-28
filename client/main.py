@@ -1,5 +1,3 @@
-# main.py
-
 from game_app import GameApp
 
 if __name__ == "__main__":
